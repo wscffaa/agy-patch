@@ -31,12 +31,11 @@
 
 ## 提交 PR 前自检
 
-运行仓库可持续性门禁、Tianshu 门禁与离线单元测试：
+运行仓库自检门禁与离线单元测试：
 
 ```sh
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests -v
-npm --prefix scripts/tianshu run gates -- --repo "$PWD"
 ```
 
 禁止提交真实凭据、`~/.gemini/agy-gateway.env`、`.cache/` 或 `templates/*/stock/PROMPT.md` 中未脱敏的个人技能与规则。

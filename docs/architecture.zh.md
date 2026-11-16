@@ -1,9 +1,8 @@
-<!-- Adapted from deepseek-ai/deepseek-harness (MIT): docs/architecture.zh.md -->
 # 架构
 
 [English](architecture.md) | 中文
 
-修改 `patch_agy.py`、`runtime/`、`tools/`、`scripts/` 或 `integrations/` 下的源码前请先阅读本文。本文是一张有序地图：组合方式、核心模块、数据流与扩展点。决策理由见 [Agent Notes](../.agents/notes/README.zh.md)，底层逆向细节见 [references/](references/context-window-patch.md)。
+修改 `patch_agy.py`、`runtime/`、`tools/`、`scripts/` 或 `integrations/` 下的源码前请先阅读本文。底层逆向细节见 [references/](references/context-window-patch.md)。
 
 ## 概览
 
@@ -18,7 +17,7 @@
 | 运行时层 | 自动更新屏蔽、Cloud Code 缓存保活中继、Powerline 状态栏 | [`runtime/agy-wrapper.sh`](../runtime/agy-wrapper.sh) |
 | 升级工具链 | 版本清单拉取、隔离回环/PTY 预演、`pclntab` 与样式表分析、提示词抓包脱敏 | [`tools/probe_agy.py`](../tools/probe_agy.py) |
 | 提示词基线 | 按版本归档原始模板、`PROMPT.md` 及带理由的覆盖文件 | [`templates/v1.5.9/README.md`](../templates/v1.5.9/README.md) |
-| 安装与门禁 | 幂等安装/卸载、Python 与隐私守卫及天枢仓库门禁 | [`scripts/install.py`](../scripts/install.py) |
+| 安装与门禁 | 幂等安装/卸载、模板/隐私与链接自检 | [`scripts/install.py`](../scripts/install.py) |
 | ACP MCP Hub | 可选 stdio MCP 服务与多路复用 `agy acp` 的 Unix Socket Hub | [`integrations/consult_gemini_mcp.py`](../integrations/consult_gemini_mcp.py) |
 
 ## 数据流

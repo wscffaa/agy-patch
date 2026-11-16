@@ -1,37 +1,11 @@
-<!-- Adapted from deepseek-ai/deepseek-harness (MIT): .github/pull_request_template.md -->
-<!-- Fill in every section. Link issues with Fixes #N or Refs #N. -->
-
 ## Motivation
 
-<!-- Why this change is needed. Link the issue. -->
+<!-- Describe why this change is needed and link any related issue (`Closes #N`). -->
 
 ## Changes
 
-<!-- Behavior and file changes, grouped by intent. -->
+<!-- Summarize code, template, or documentation changes. -->
 
 ## Testing
 
-<!-- Test design: which requirement scenarios are covered and how they were run. -->
-
-- <!-- Test entry -->
-
-  <details>
-  <summary>Proof</summary>
-
-  </details>
-
-## AI Usage
-
-<!-- ai-declaration:start -->
-[![AI-DECLARATION: TBD](https://img.shields.io/badge/䷼%20AI--DECLARATION-TBD-e5e7eb?labelColor=e5e7eb)](https://ai-declaration.md)
-
-**AI declaration** ([v0.1.2](https://ai-declaration.md/en/0.1.2)): `TBD`
-<!-- ai-declaration:end -->
-
-| Stage | Level | AI share | Decision record |
-|:--|:--|--:|:--|
-| breakdown | TBD | ?% | TBD |
-| design | TBD | ?% | TBD |
-| testing | TBD | ?% | TBD |
-| implementation | TBD | ?% | TBD |
-| review | n/a | — | No review feedback processed yet. |
+<!-- List the commands run (for example `python3 scripts/check_repo.py`, `python3 -m unittest discover -s tests -v`, or `python3 tools/probe_agy.py rehearse`) and their results. -->

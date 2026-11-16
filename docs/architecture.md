@@ -1,9 +1,8 @@
-<!-- Adapted from deepseek-ai/deepseek-harness (MIT): docs/architecture.md -->
 # Architecture
 
 English | [中文](architecture.zh.md)
 
-Read this before changing source under `patch_agy.py`, `runtime/`, `tools/`, `scripts/`, or `integrations/`. It is an ordered map: composition, core modules, data flow, and extension points. Decision rationale lives in [Agent Notes](../.agents/notes/README.md) and deep reverse-engineering notes live in [references/](references/context-window-patch.md).
+Read this before changing source under `patch_agy.py`, `runtime/`, `tools/`, `scripts/`, or `integrations/`. Deep reverse-engineering references live in [references/](references/context-window-patch.md).
 
 ## Overview
 
@@ -18,7 +17,7 @@ Read this before changing source under `patch_agy.py`, `runtime/`, `tools/`, `sc
 | Runtime layer | Auto-update guard, Cloud Code cache keepalive relay, pastel powerline statusline | [`runtime/agy-wrapper.sh`](../runtime/agy-wrapper.sh) |
 | Upgrade toolchain | Release manifest fetch, isolated loopback/PTY rehearsal, `pclntab` & style inspection, prompt scrubbing | [`tools/probe_agy.py`](../tools/probe_agy.py) |
 | Prompt baselines | Per-version stock templates, rendered `PROMPT.md`, and justified overrides | [`templates/v1.5.9/README.md`](../templates/v1.5.9/README.md) |
-| Installer & gates | Idempotent setup/uninstall, Python/privacy invariants, and Tianshu repository gates | [`scripts/install.py`](../scripts/install.py) |
+| Installer & checks | Idempotent setup/uninstall, template/privacy/link invariants | [`scripts/install.py`](../scripts/install.py) |
 | ACP MCP Hub | Optional stdio MCP server + Unix-socket Hub multiplexing `agy acp` | [`integrations/consult_gemini_mcp.py`](../integrations/consult_gemini_mcp.py) |
 
 ## Data flow

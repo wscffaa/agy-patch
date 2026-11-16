@@ -1,78 +1,35 @@
-<!-- Adapted from deepseek-ai/deepseek-harness (MIT): AGENTS.md -->
 # AGENTS.md
 
-`agy-patch` is a fail-closed, version-adaptive ARM64 binary patcher, prompt-cache keepalive wrapper, statusline, and upgrade-rehearsal harness for Google Antigravity CLI (`agy`). Read [docs/architecture.md](docs/architecture.md) before changing code under `patch_agy.py`, `runtime/`, `tools/`, `scripts/`, or `integrations/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
-
-## Pre-stable APIs and persisted data
-
-CLI flags and internal module helpers are pre-stable; update every caller in the same change and record externally visible breaking changes in [CHANGELOG.md](CHANGELOG.md).
-
-Persisted state (`site_shapes.json`, `templates/v<ver>/`, `~/.local/bin/agy.v<ver>.orig`, and `~/.gemini/antigravity-cli/settings.json`) is versioned or merged non-destructively. Never mutate a clean `.orig` backup or apply unreviewed instruction shapes. See [docs/architecture.md](docs/architecture.md) for the owning format references.
+`agy-patch` is a fail-closed, version-adaptive ARM64 binary patcher, prompt-cache keepalive wrapper, statusline, and upgrade-rehearsal harness for Google Antigravity CLI (`agy`). Read [docs/architecture.md](docs/architecture.md) before changing source code.
 
 ## Repository layout
 
-```
-patch_agy.py     primary version-adaptive ARM64 binary and template patcher
-site_shapes.json reviewed stock instruction shapes (fail-closed offset guard)
-runtime/         installed wrapper, cache keepalive relay, and statusline
-tools/           upgrade rehearsal, update check, Mach-O inspection, prompt capture
-scripts/         idempotent installer (install.py), repo checks (check_repo.py), and Tianshu gates (scripts/tianshu/)
-integrations/    optional consult_gemini MCP stdio server and ACP Unix-socket Hub
-templates/       per-release stock baselines, captured prompts, and system_prompts overrides
-tests/           offline unit and repository-invariant tests (stdlib unittest)
-docs/            bilingual architecture, subsystems, cookbooks, references, and diagnostics
-.agents/notes/   Agent Notes: decision records (.agents/notes/README.md)
+```text
+patch_agy.py     Primary version-adaptive ARM64 binary & template patcher
+site_shapes.json Reviewed stock instruction shapes (fail-closed offset guard)
+runtime/         Runtime wrapper (`agy-wrapper.sh`), `cache_relay.py`, `statusline.sh`
+tools/           Upgrade rehearsal (`probe_agy.py`), update check, Mach-O inspector, prompt capture
+scripts/         Idempotent installer (`install.py`) and repository hygiene checks (`check_repo.py`)
+integrations/    Optional `consult_gemini` MCP stdio server and ACP Unix-socket Hub
+templates/       Per-release (`v1.5.3`–`v1.5.9`) stock baselines and `system_prompts/` overrides
+tests/           Offline unit and repository-invariant tests (`unittest`)
+docs/            Architecture overview, reverse-engineering references, and diagnostics
 ```
 
-## Commands
+## Common commands
 
 ```sh
-python3 scripts/install.py --dry-run                       # preview local installation
-python3 scripts/check_repo.py                                # Python, templates, privacy, and link gate
-python3 -m unittest discover -s tests -v                     # offline unit test suite
-python3 tools/probe_agy.py rehearse                          # isolated rehearsal for new agy releases
-npm --prefix scripts/tianshu ci                              # install Tianshu gates
-npm --prefix scripts/tianshu run gates -- --repo "$PWD"      # all Tianshu repository gates
-npm --prefix scripts/tianshu run gate -- <name> --repo "$PWD" # one Tianshu gate
+python3 scripts/install.py --dry-run      # Preview local installation steps
+python3 scripts/install.py                # Idempotent setup (patch, wrapper, statusline, settings, .zshrc)
+python3 scripts/check_repo.py             # Python compile, shell syntax, template parity, privacy, and links
+python3 -m unittest discover -s tests -v  # Offline unit test suite
+python3 tools/probe_agy.py rehearse       # Isolated upgrade rehearsal against a new agy release
 ```
 
-Run focused checks that match the change before pushing. CI owns the full matrix; do not repeat a passing check for commit or push.
+## Hard invariants
 
-## Conventions
-
-- Validate at external boundaries (Mach-O headers, `pclntab` symbols, `site_shapes.json`, `templates/v<ver>/`, `settings.json`, HTTP relay headers); trust internal invariants between checked helpers. See [docs/defensive-patterns/README.md](docs/defensive-patterns/README.md).
-- Failures are fail-closed and explicit: refuse patching on missing backups, version mismatches, missing override reasons, or unreviewed instruction shapes.
-- Never bypass `codesign -f -s -` after modifying a Mach-O binary on `darwin/arm64`.
-- An empty `except` names the exception and why it is safe to ignore; keep the `try` to one operation.
-- Paths and runtime toggles (`AGY_CACHE_RELAY`, `AGY_BIN`, `AGY_CLI_DISABLE_AUTO_UPDATE`, `contextWindow`) are explicit configuration; protocol constants stay fixed.
-- Comments state contracts, preconditions, and non-obvious ARM64/Mach-O invariants. Do not restate code or narrate tests. See [docs/AGENTS.md](docs/AGENTS.md).
-- Files end with one trailing newline. Pre-commit runs `git diff --cached --check`.
-- Never commit credentials, `~/.gemini/agy-gateway.env`, `.cache/`, or unredacted personal skills/rules inside `templates/*/stock/PROMPT.md`.
-
-## Testing
-
-- Tests describe behavior, not implementation. Change obsolete behavior together with its tests and explain why in the PR.
-- Each requirement gets tests for happy path, boundary/empty inputs, error handling, and valid state transitions.
-- Keep unit tests in `tests/` offline and quota-free (no live Google Cloud Code calls).
-
-## Documentation
-
-- Docs accompany every code change. Update affected READMEs and module docstrings in the same change.
-- One physical line per paragraph. Bilingual pairs (`*.md` and `*.zh.md`) update together; see [docs/AGENTS.md](docs/AGENTS.md). `docs/references/`, `docs/diagnostics/`, and `templates/` are excluded from translation pairing in `.tianshu/config.json`.
-
-## Agent Notes
-
-- Write an Agent Note only for durable decision rationale. Mechanical and local edits are exempt. See [.agents/notes/README.md](.agents/notes/README.md).
-- Every new Agent Note runs a supersession check. Archived notes are frozen; never edit them or treat them as current authority.
-
-## Issues and PRs
-
-- Issues start from the templates in [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE). Labels come from the Tianshu kit: `type/*`, `severity/*`, `env/*`, `priority/*`, `stage/rework`, `agent/auto`, `status/needs-owner`, and `area/*`.
-- Every Issue and PR carries exactly one `type/*` label; a `type/bug` also carries one `severity/S1`–`S3` and one `env/prod` or `env/test`; at most one `priority/p0`–`p3`.
-- Every PR also carries every materially affected `area/*` label, at least one.
-- PR descriptions follow [.github/pull_request_template.md](.github/pull_request_template.md): Motivation, Changes, Testing, AI Usage. Link issues with `Fixes #N` or `Refs #N`.
-- Disclose AI participation in the AI Usage section.
-
-## Editing these instructions
-
-This file is the real instruction file; do not add `CLAUDE.md` or other duplicate instruction files. Keep each rule self-contained with a link to its home. Condense when clarity survives. Raise a ceiling in `.tianshu/doc-budgets.json` only when the required content needs the space, and justify the diff.
+- **Never mutate `.orig` backups**: `patch_agy.py --apply` always rebuilds `~/.local/bin/agy` from `~/.local/bin/agy.v<ver>.orig`.
+- **Always re-sign modified Mach-O binaries**: run `codesign -f -s -` after patching on `darwin/arm64`.
+- **Fail closed on shifted instructions**: never bypass `site_shapes.json` verification without inspecting diffs via `python3 tools/probe_agy.py sites <old.orig> <new.orig>` and reading [`docs/references/context-window-patch.md` §5](docs/references/context-window-patch.md#5-authoring-pitfalls).
+- **Keep tests offline and quota-free**: unit tests under `tests/` must not make live upstream API calls or mutate user `$HOME`.
+- **Never commit secrets or unredacted user context**: keep `.cache/`, `~/.gemini/agy-gateway.env`, user rules, personal skills, and configured MCP lists out of tracked files.

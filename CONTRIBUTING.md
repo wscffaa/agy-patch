@@ -31,12 +31,11 @@ English | [中文](CONTRIBUTING.zh.md)
 
 ## Before Opening a PR
 
-Run the repository sustainability checks, Tianshu gates, and unit tests:
+Run the repository checks and unit tests:
 
 ```sh
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests -v
-npm --prefix scripts/tianshu run gates -- --repo "$PWD"
 ```
 
 Never commit real credentials, `~/.gemini/agy-gateway.env`, `.cache/`, or unredacted personal skills/rules inside `templates/*/stock/PROMPT.md`.
