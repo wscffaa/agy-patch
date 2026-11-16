@@ -5,3 +5,13 @@ __pycache__/
 .capture-state/
 .claude/
 dist/
+# Adapted from deepseek-ai/deepseek-harness (MIT): .gitignore (Tianshu gate entries)
+node_modules
+scripts/tianshu/node_modules
+
+# Agent working artifacts, one directory per Issue (same as DeepSeek Harness)
+tmp/
+# Names and customer names for scripts/redact; the list is PII itself
+.tianshu/redact-names.txt
+# Extra git worktrees live inside the project (tianshu-agent-dispatch)
+.worktrees/

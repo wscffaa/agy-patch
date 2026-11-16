@@ -1,0 +1,10 @@
+# Bilingual-pair consistency record for README.md (scripts/tianshu translation-pairing gate): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   npm --prefix scripts/tianshu run gate -- translation-pairing --write docs/subsystems/README.md
+/:
+  en: 51109c5de96499c5
+  zh: 3cdcf3c3ef908f88
+/subsystems:
+  en: f18811b97b66f2d1
+  zh: 138d5115a2f52194

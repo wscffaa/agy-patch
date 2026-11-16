@@ -1,5 +1,7 @@
 # Contributing & Supporting New `agy` Releases
 
+English | [中文](CONTRIBUTING.zh.md)
+
 `agy-patch` targets a closed-source Go Mach-O binary (`darwin/arm64`). Sustainability depends on **fail-closed upgrades**: never blindly apply old byte offsets to a new upstream release.
 
 ## Upgrading to a New `agy` Release
@@ -29,11 +31,12 @@
 
 ## Before Opening a PR
 
-Run the repository sustainability checks and unit tests:
+Run the repository sustainability checks, Tianshu gates, and unit tests:
 
 ```sh
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests -v
+npm --prefix scripts/tianshu run gates -- --repo "$PWD"
 ```
 
 Never commit real credentials, `~/.gemini/agy-gateway.env`, `.cache/`, or unredacted personal skills/rules inside `templates/*/stock/PROMPT.md`.

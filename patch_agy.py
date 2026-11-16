@@ -9,6 +9,7 @@ Prompt templates: writes every file in templates/v<version>/system_prompts/ that
 from Google's original in stock/, for the version the binary reports (tools/prompt_templates.py).
 
 Every --apply rebuilds from the clean agy.v<version>.orig backup and re-signs the binary.
+Note: Rationale in .agents/notes/implemented/architecture/2026-11-16-fail-closed-binary-patching-and-runtime-isolation.md.
 """
 
 from __future__ import annotations

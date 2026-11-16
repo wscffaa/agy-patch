@@ -23,7 +23,7 @@ This means you do **NOT** need to poll in a loop while waiting for messages or u
 
 ## `<mcp_servers>`
 
-```text
+````text
 Each MCP server has a directory `<appDataDir>/mcp/<serverName>` containing tool schemas (`<toolName>.json`) and optionally an `instructions.md` file with best practices.
 Eagerly loaded tools are registered as native tools under the name `mcp_<serverName>_<toolName>`. Call eager tools directly.
 For lazily-loaded tools, read the corresponding schema file to understand the arguments and usage, then call the tool using the `call_mcp_tool` tool.
@@ -36,7 +36,7 @@ Lazy:
 <toolName>
 ```
 [dynamic: your MCP servers and tool names]
-```
+````
 
 ## `<subagents>`
 

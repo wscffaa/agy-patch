@@ -10,13 +10,13 @@
 
 ## 核心能力
 
-- **上下文窗口与 Checkpointer 解锁**（[`patch_agy.py`](patch_agy.py)）：在 Gemini 4 Argon / Carbon / Hydrogen 上解锁 `/model` `Tab` 上下文档位（`256K` / `512K` / `900K`），解除 >256K checkpoint 上限与 64K `USER_INPUT` 步级截断，修正状态栏 token 分母与 15 秒空闲刷新。
+- **上下文窗口与 Checkpointer 解锁**（`patch_agy.py`）：在 Gemini 4 Argon / Carbon / Hydrogen 上解锁 `/model` `Tab` 上下文档位（`256K` / `512K` / `900K`），解除 >256K checkpoint 上限与 64K `USER_INPUT` 步级截断，修正状态栏 token 分母与 15 秒空闲刷新。
 - **TUI 与 CoT 可读性增强**：保留完整多行 `∴ Thought...` 思考块（`medium` 详略度下实时单行预览，`high` 下流式完整展开）、原生终端 `Faint` + `Italic` 排版、语义 ANSI `"terminal"` 调色板、自适应明暗（DEC 2031）全宽输入栏以及呼吸态 Gemini 星标等待行。
-- **系统提示词精简**（[`templates/`](templates/v1.5.9/README.md)）：逐字节校验内嵌 `system_prompts/*.tmpl` 槽位，并在 `prompt_overrides.json` 中强制记录每项改动的理由。
-- **提示词缓存保活中继**（[`runtime/agy-wrapper.sh`](runtime/agy-wrapper.sh) + [`runtime/cache_relay.py`](runtime/cache_relay.py)）：禁止后台静默自动更新（`AGY_CLI_DISABLE_AUTO_UPDATE=true`），并在交互式与 `acp` 会话空闲期间保活 5 分钟隐式缓存（设置 `AGY_CACHE_RELAY=off` 可关闭）。
-- **Pastel Powerline 状态栏**（[`runtime/statusline.sh`](runtime/statusline.sh)）：单次 `jq` 解析渲染上下文占比、token 统计、单步延迟/TPS、配额及缓存保活状态（`↻`、`↻n`、`✗`）。
-- **Fail-Closed 升级预演**（[`tools/probe_agy.py`](tools/probe_agy.py)）：在临时目录下载并校验新版本 SHA-512，解析全部分组位点、核对指令形态（`site_shapes.json`），并在回环端点 + PTY 下验证线缆请求与 TUI 界面，确认无误后再动线上二进制。
-- **可选 ACP MCP Hub**（[`integrations/consult_gemini/`](integrations/consult_gemini_mcp.py)）：零依赖 MCP stdio 服务 + 单例 Unix Socket Hub，使 Claude Code 等外部客户端可通过常驻 `agy acp` 发起只读 `consult_gemini` 咨询并读取精确 SQLite 用量遥测。
+- **系统提示词精简**（`templates/v<ver>/`）：逐字节校验内嵌 `system_prompts/*.tmpl` 槽位，并在 `prompt_overrides.json` 中强制记录每项改动的理由。
+- **提示词缓存保活中继**（`runtime/agy-wrapper.sh` + `runtime/cache_relay.py`）：禁止后台静默自动更新（`AGY_CLI_DISABLE_AUTO_UPDATE=true`），并在交互式与 `acp` 会话空闲期间保活 5 分钟隐式缓存（设置 `AGY_CACHE_RELAY=off` 可关闭）。
+- **Pastel Powerline 状态栏**（`runtime/statusline.sh`）：单次 `jq` 解析渲染上下文占比、token 统计、单步延迟/TPS、配额及缓存保活状态（`↻`、`↻n`、`✗`）。
+- **Fail-Closed 升级预演**（`tools/probe_agy.py`）：在临时目录下载并校验新版本 SHA-512，解析全部分组位点、核对指令形态（`site_shapes.json`），并在回环端点 + PTY 下验证线缆请求与 TUI 界面，确认无误后再动线上二进制。
+- **可选 ACP MCP Hub**（`integrations/consult_gemini/`）：零依赖 MCP stdio 服务 + 单例 Unix Socket Hub，使 Claude Code 等外部客户端可通过常驻 `agy acp` 发起只读 `consult_gemini` 咨询并读取精确 SQLite 用量遥测。
 
 ---
 
@@ -79,19 +79,19 @@ python3 ~/.gemini/agy-patch/scripts/install.py --uninstall
 `AGY_CLI_DISABLE_AUTO_UPDATE=true` 必须保持开启（上游仅识别精确字符串 `true`），防止后台更新静默覆盖已打补丁的二进制。每次升级前先用副本预演：
 
 ```sh
-# 1. 只读检查是否有新版本
+# 1. Check whether a newer upstream release exists (read-only)
 python3 -I ~/.gemini/agy-patch/tools/check_agy_update.py
 
-# 2. 在隔离临时目录完成下载、SHA-512 校验、模板脚手架、形态检查与线缆/TUI 探测
+# 2. Download, verify SHA-512, scaffold templates, check stock shapes, and probe wire/TUI on copies
 python3 ~/.gemini/agy-patch/tools/probe_agy.py rehearse
 
-# 3. 确认预演结果全部 ok（并人工核对 READ 项）后再升级本机：
+# 3. Once rehearse reports ok (and you have reviewed any READ items):
 env -u AGY_CLI_DISABLE_AUTO_UPDATE agy update
 python3 ~/.gemini/agy-patch/patch_agy.py --apply
 python3 ~/.gemini/agy-patch/patch_agy.py --status -v
 ```
 
-若出现解析失败或未审查的新形态，请先阅读 [`docs/references/context-window-patch.md` §5](docs/references/context-window-patch.md#5-authoring-pitfalls) 与 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+若出现解析失败或未审查的新形态，请先阅读 [`docs/references/context-window-patch.md` §5](docs/references/context-window-patch.md#5-authoring-pitfalls) 与 [`CONTRIBUTING.zh.md`](CONTRIBUTING.zh.md)。
 
 ---
 
@@ -106,7 +106,7 @@ python3 ~/.gemini/agy-patch/patch_agy.py --status -v
 | [`scripts/`](scripts/install.py) | 幂等安装/卸载器（`install.py`）与仓库规范自检门禁（`check_repo.py`） |
 | [`templates/`](templates/v1.5.9/README.md) | 按版本归档（`v1.5.3`–`v1.5.9`）的原始模板、`PROMPT.md`/`tools.json`、期望覆盖与 `prompt_overrides.json` |
 | [`integrations/`](integrations/consult_gemini_mcp.py) | 可选 `consult_gemini` MCP stdio 服务与 ACP Unix Socket Hub（`consult_gemini/`） |
-| [`docs/`](docs/architecture.md) | 架构总览、逆向参考手册（`docs/references/`）与诊断取证记录（`docs/diagnostics/`） |
+| [`docs/`](docs/architecture.zh.md) | 架构总览、逆向参考手册（`docs/references/`）与诊断取证记录（`docs/diagnostics/`） |
 | [`tests/`](tests/test_repo_invariants.py) | 离线单元测试与仓库不变量测试集（`python3 -m unittest discover -s tests -v`） |
 
 ---
