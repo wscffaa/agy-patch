@@ -146,7 +146,7 @@ class WindowsInstallRegressionTests(unittest.TestCase):
 
     def test_fresh_windows_51_dry_run_activates_51_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            home = pathlib.Path(tmp)
+            home = pathlib.Path(tmp).resolve()
             fake_bin = home / "agy.exe"
             fake_bin.write_bytes(b"MZ")
             output = io.StringIO()
