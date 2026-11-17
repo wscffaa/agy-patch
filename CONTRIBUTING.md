@@ -2,7 +2,7 @@
 
 English | [中文](CONTRIBUTING.zh.md)
 
-`agy-patch` targets a closed-source Go Mach-O binary (`darwin/arm64`). Sustainability depends on **fail-closed upgrades**: never blindly apply old byte offsets to a new upstream release.
+`agy-patch` targets a closed-source Go binary: Mach-O/arm64 on macOS and PE32+/amd64 on Windows. Sustainability depends on **fail-closed upgrades**: never blindly apply old byte offsets to a new upstream release.
 
 ## Upgrading to a New `agy` Release
 
@@ -28,6 +28,16 @@ English | [中文](CONTRIBUTING.zh.md)
    python3 patch_agy.py --apply
    python3 patch_agy.py --status -v
    ```
+
+## Windows (amd64) Releases
+
+Windows patches are pinned to `agy v1.5.9` in `site_shapes_windows.json`. For a new release:
+
+1. Download `cli_windows_x64.exe` from the updater manifest and verify its SHA-512.
+2. Run `python patch_agy.py --status --binary <new.exe> -v`; a changed `.text` size or any stock-byte mismatch fails closed.
+3. Review the changed function bodies, branch destinations, register/stack contracts, and patch instruction semantics before updating `tools/win_amd64.py` or the authoritative stock-byte entries in `site_shapes_windows.json`. Matching a short instruction prefix alone is not a behavioral proof.
+4. Patch an isolated copy. `--version`, `models`, and ACP `initialize` are startup/protocol smoke checks only. Verify `/model` + Tab, the transmitted checkpoint limit, preservation of inputs above 64K, and idle cache replay separately before recommending installation. Windows rehearsal reports incomplete behavioral coverage when wire/screens are skipped.
+5. Windows TUI/CoT rendering, corrected context denominators, 15-second idle UI refresh, and the optional Unix-socket MCP Hub are not ported. Keep the PR experimental until the required behavior has evidence; do not infer parity from passing unit tests.
 
 ## Before Opening a PR
 

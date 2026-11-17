@@ -1,0 +1,17 @@
+{
+  "v1.5.9": {
+    "text_vsize": 68117222,
+    "text_raw_size": 68117504,
+    "sites": {
+      "store.(*Store).ContextWindow -> (*Store).ContextWindowChoice": "488b8c2408010000488b4958904885c9",
+      "store.(*Store).ContextWindow -> whitelist miss enters Gemini 4 matcher": "48c7c0ffffffff4885c0",
+      "model.SelectorModel.offersContextWindow -> return true": "488b9424f03d0000488b",
+      "model.SelectorModel.offersContextWindow -> whitelist miss enters Gemini 4 matcher": "48c7c0ffffffff4885c0",
+      "utils.GetCheckpointConfig -> remove 256K (0x3e800) ceiling": "be00e80300",
+      "config.applyFeatureProviderCheckpointOverrideConfig -> zero expCp.MaxTokenLimit": "488b5c2440",
+      "chatconverters.(*TrajectoryChatConverter).getMaxTokensForStep -> disable 64K USER_INPUT clamp": "7405",
+      "chatconverters.(*TrajectoryChatConverter).getMaxTokensForStep -> disable 64K USER_INPUT clamp (fallthrough)": "7526",
+      "serializers.DefaultSerializer.stepToMessage -> route STEP_TYPE_USER_INPUT (0xe) to unlimited branch": "7554"
+    }
+  }
+}

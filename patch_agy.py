@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Version-adaptive patcher for agy (darwin/arm64): TUI sites and system prompt templates.
+"""Version-adaptive patcher for agy: Mach-O/arm64 TUI sites and PE/amd64 core sites.
 
 TUI sites: parses the Mach-O __lrodata_gopcln symbol table to locate target Go functions,
 anchors each site via invariant preceding instruction sequences, and computes PC-relative
@@ -25,6 +25,7 @@ import sys
 from typing import NamedTuple
 
 from tools import prompt_templates
+from tools.binfmt import is_pe
 
 
 VM_BASE = 0x100000000
@@ -199,11 +200,23 @@ LIPGLOSS_COPY_LOOP_X5_X4_ORIG = bytes.fromhex(
 
 HOME = pathlib.Path.home()
 REPO = pathlib.Path(__file__).resolve().parent
-GEMINI_WRAPPER_TARGET = HOME / ".gemini/bin/agy"
-DEFAULT_BINARIES: tuple[pathlib.Path, ...] = (HOME / ".local/bin/agy", GEMINI_WRAPPER_TARGET)
-HUB_WRAPPER_SOURCE = REPO / "runtime/agy-wrapper.sh"
-STATUSLINE_SOURCE = REPO / "runtime/statusline.sh"
-STATUSLINE_TARGET = HOME / ".gemini/antigravity-cli/statusline.sh"
+IS_WINDOWS = os.name == "nt"
+if IS_WINDOWS:
+    _local_app_data = pathlib.Path(os.environ.get("LOCALAPPDATA", HOME))
+    GEMINI_WRAPPER_TARGET = HOME / ".gemini/bin/agy.cmd"
+    DEFAULT_BINARIES: tuple[pathlib.Path, ...] = (
+        _local_app_data / "agy/bin/agy.exe",
+        HOME / ".local/bin/agy.exe",
+    )
+    HUB_WRAPPER_SOURCE = REPO / "runtime/agy-wrapper.cmd"
+    STATUSLINE_SOURCE = REPO / "runtime/statusline.py"
+    STATUSLINE_TARGET = HOME / ".gemini/antigravity-cli/statusline.py"
+else:
+    GEMINI_WRAPPER_TARGET = HOME / ".gemini/bin/agy"
+    DEFAULT_BINARIES = (HOME / ".local/bin/agy", GEMINI_WRAPPER_TARGET)
+    HUB_WRAPPER_SOURCE = REPO / "runtime/agy-wrapper.sh"
+    STATUSLINE_SOURCE = REPO / "runtime/statusline.sh"
+    STATUSLINE_TARGET = HOME / ".gemini/antigravity-cli/statusline.sh"
 
 SETTINGS_PATH = HOME / ".gemini/antigravity-cli/settings.json"
 CACHE_DIR = REPO / ".cache"
@@ -3654,6 +3667,13 @@ def _resolve_groups(data: bytes | bytearray, version: str, strict: bool) -> dict
 
 def resolve_site_groups(data: bytes | bytearray, version: str, strict: bool = False) -> dict[str, tuple[PatchSite, ...] | Exception]:
     """Each resolver's sites, or the exception that stopped it: a new release can move several anchors at once."""
+    if is_pe(data):
+        from tools import win_amd64
+
+        try:
+            return {"windows-core": tuple(PatchSite(*s) for s in win_amd64.resolve_patch_sites(data, version, strict))}
+        except Exception as exc:  # reported as one group, like the Mach-O resolvers
+            return {"windows-core": exc}
     out = _resolve_groups(data, version, strict)
     flat = {
         "palette-typography": lambda r: (*r[0], *r[1]),
@@ -3664,10 +3684,19 @@ def resolve_site_groups(data: bytes | bytearray, version: str, strict: bool = Fa
 
 
 def resolve_patch_sites(data: bytes | bytearray, version: str, strict: bool = False) -> tuple[PatchSite, ...]:
-    """Resolve every site, in apply order: the TUI/Cortex code sites, tool monitors, Gemini wire map, color scheme, command elbow, spinner, pending line, its verbs, tool marks, live thinking, thought grouping, thought block, Hydrogen, and changed prompt templates.
+    """Resolve every site, in apply order.
+
+    Mach-O/arm64: the TUI/Cortex code sites, tool monitors, Gemini wire map, color
+    scheme, command elbow, spinner, pending line, its verbs, tool marks, live
+    thinking, thought grouping, thought block, Hydrogen, and prompt templates.
+    PE/amd64: the reviewed long-conversation sites and prompt templates.
 
     `strict` is for clean backups: every prompt template must match its pinned stock version.
     """
+    if is_pe(data):
+        from tools import win_amd64
+
+        return tuple(PatchSite(*s) for s in win_amd64.resolve_patch_sites(data, version, strict))
     out = _resolve_groups(data, version, strict)
     for result in out.values():
         if isinstance(result, Exception):
@@ -3733,6 +3762,8 @@ def stock_shape(code: bytes) -> str:
 
 def stock_shapes(data: bytes | bytearray, sites: tuple[PatchSite, ...]) -> dict[str, str]:
     """The shape of every unpatched code site in a clean binary, by site name."""
+    if is_pe(data):
+        return {}  # PE sites are pinned by exact bytes in site_shapes_windows.json
     text_start, text_end = _text_section(data)
     return {
         s.name: stock_shape(bytes(data[s.offset : s.offset + len(s.patched)]))
@@ -3749,6 +3780,11 @@ def unreviewed_shapes(data: bytes | bytearray, sites: tuple[PatchSite, ...]) -> 
 
 def accept_shapes(path: pathlib.Path) -> None:
     """Record the stock shapes of a clean binary (or of its clean backup) as reviewed."""
+    if path.exists():
+        with path.open("rb") as handle:
+            if handle.read(2) == b"MZ":
+                print("[shape] Windows/amd64 sites are pinned by exact bytes in site_shapes_windows.json; nothing to record.")
+                return
     backup = backup_path_for(path)
     source = backup if backup.exists() else path
     data = source.read_bytes()
@@ -3846,7 +3882,7 @@ def detect_binary_version(path: pathlib.Path) -> str:
 def backup_path_for(path: pathlib.Path) -> pathlib.Path:
     ver = detect_binary_version(path)
     suffix = f".v{ver}.orig" if ver != "unknown" else ".orig"
-    return path.with_suffix(suffix)
+    return path.with_name(path.name + suffix)
 
 
 def inspect_binary(path: pathlib.Path) -> tuple[str, tuple[PatchSite, ...]]:
@@ -3854,7 +3890,7 @@ def inspect_binary(path: pathlib.Path) -> tuple[str, tuple[PatchSite, ...]]:
         return "missing", ()
     with path.open("rb") as f:
         head = f.read(4)
-    if head.startswith(b"#!"):
+    if head.startswith(b"#!") or path.suffix.lower() in (".cmd", ".bat", ".ps1", ".py", ".sh"):
         return "wrapper", ()
     data = path.read_bytes()
     sites = resolve_patch_sites(data, detect_binary_version(path))
@@ -3872,7 +3908,9 @@ def inspect_binary(path: pathlib.Path) -> tuple[str, tuple[PatchSite, ...]]:
 
 
 def codesign_adhoc(path: pathlib.Path) -> None:
-    subprocess.run(["codesign", "-f", "-s", "-", str(path)], check=True)
+    """Ad-hoc sign Mach-O builds; PE and ELF need no signature after patching."""
+    if sys.platform == "darwin":
+        subprocess.run(["codesign", "-f", "-s", "-", str(path)], check=True)
 
 
 def apply_patch(path: pathlib.Path) -> None:
@@ -3881,6 +3919,11 @@ def apply_patch(path: pathlib.Path) -> None:
         if state != "wrapper" or path.read_bytes() != HUB_WRAPPER_SOURCE.read_bytes():
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(HUB_WRAPPER_SOURCE, path)
+            if IS_WINDOWS:
+                python_wrapper = REPO / "runtime/agy_wrapper.py"
+                if python_wrapper.exists():
+                    shutil.copy2(python_wrapper, path.parent / "agy_wrapper.py")
+                    shutil.copy2(REPO / "runtime/cache_relay.py", path.parent / "cache_relay.py")
             sidecar = path.parent / "agy.version.json"
             if sidecar.exists():
                 sidecar.unlink()
@@ -3929,8 +3972,13 @@ def apply_patch(path: pathlib.Path) -> None:
     tmp_path.write_bytes(data)
     shutil.copymode(source, tmp_path)
     codesign_adhoc(tmp_path)
-    tmp_path.replace(path)
-    print(f"[done] Patched ({len(sites)} sites) and re-signed {path}")
+    try:
+        tmp_path.replace(path)
+    except PermissionError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"could not replace {path}; close any running agy process and retry") from exc
+    signed = " and re-signed" if sys.platform == "darwin" else ""
+    print(f"[done] Patched ({len(sites)} sites){signed} {path}")
 
 
 def revert_patch(path: pathlib.Path) -> None:
@@ -3938,7 +3986,7 @@ def revert_patch(path: pathlib.Path) -> None:
         print(f"[skip] {path} (missing)")
         return
     with path.open("rb") as f:
-        if f.read(4).startswith(b"#!"):
+        if f.read(4).startswith(b"#!") or path.suffix.lower() in (".cmd", ".bat", ".ps1", ".py", ".sh"):
             print(f"[skip] {path} (wrapper)")
             return
 
@@ -3950,7 +3998,11 @@ def revert_patch(path: pathlib.Path) -> None:
         tmp_path = path.with_suffix(".reverting")
         shutil.copy2(backup, tmp_path)
         codesign_adhoc(tmp_path)
-        tmp_path.replace(path)
+        try:
+            tmp_path.replace(path)
+        except PermissionError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise RuntimeError(f"could not replace {path}; close any running agy process and retry") from exc
         print(f"[done] Restored {path} from {backup}")
         return
 
@@ -3992,6 +4044,9 @@ def print_status(binaries: list[pathlib.Path], verbose: bool = False) -> None:
         if verbose and sites:
             for idx, s in enumerate(sites, 1):
                 print(f"  [{idx:02d}] [{s.domain}] {hex(s.va)} (off {hex(s.offset)}): {s.name} [{len(s.patched)}B]")
+        if any(s.domain == "pe" for s in sites):
+            print("  [note] Experimental Windows/amd64 patch: byte state only; feature behavior is unverified.")
+            print("         TUI/CoT, corrected context denominators, 15s idle UI refresh, and the optional MCP Hub are not ported.")
     if SETTINGS_PATH.exists():
         settings = json.loads(SETTINGS_PATH.read_text())
         print(f"Settings : {SETTINGS_PATH} -> model={settings.get('model')!r}, contextWindow={settings.get('contextWindow')!r}")
@@ -4003,7 +4058,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--status", action="store_true", help="Show current binary and settings status")
-    group.add_argument("--apply", action="store_true", help="Rebuild from the clean backup with every TUI site and prompt template applied")
+    group.add_argument("--apply", action="store_true", help="Rebuild from the clean backup with every supported site and prompt template applied")
     group.add_argument("--revert", action="store_true", help="Revert the binary patch to original bytes")
     group.add_argument("--accept-shapes", action="store_true",
                        help="Record the stock code shapes of a clean binary as reviewed (site_shapes.json), then show status")
@@ -4017,7 +4072,7 @@ def main() -> int:
         "--binary",
         type=pathlib.Path,
         action="append",
-        help="Target specific agy binary path(s) (defaults to ~/.local/bin/agy and ~/.gemini/bin/agy)",
+        help="Target specific agy binary path(s) (defaults to the platform's installed agy)",
     )
     args = parser.parse_args()
     binaries = args.binary or list(DEFAULT_BINARIES)
@@ -4029,7 +4084,7 @@ def main() -> int:
             not STATUSLINE_TARGET.exists() or STATUSLINE_SOURCE.read_bytes() != STATUSLINE_TARGET.read_bytes()
         ):
             STATUSLINE_TARGET.parent.mkdir(parents=True, exist_ok=True)
-            tmp_sl = STATUSLINE_TARGET.with_suffix(".sh.tmp")
+            tmp_sl = STATUSLINE_TARGET.with_name(STATUSLINE_TARGET.name + ".tmp")
             shutil.copy2(STATUSLINE_SOURCE, tmp_sl)
             tmp_sl.replace(STATUSLINE_TARGET)
             print(f"[sync] Atomically synced {STATUSLINE_SOURCE} -> {STATUSLINE_TARGET}")

@@ -24,6 +24,8 @@ import urllib.request
 # The base and path that `updater.GetManifestURLFromBase` builds: `%s/manifests/%s_%s%s.json`.
 UPDATER_BASE = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app"
 INSTALLED = pathlib.Path.home() / ".local/bin/agy"
+if os.name == "nt":
+    INSTALLED = pathlib.Path(os.environ.get("LOCALAPPDATA", pathlib.Path.home())) / "agy/bin/agy.exe"
 ARCHES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64", "amd64": "amd64"}
 
 
@@ -72,6 +74,8 @@ def fetch(manifest: dict, dest: pathlib.Path) -> pathlib.Path:
     if digest.hexdigest() != manifest["sha512"].lower():
         archive.unlink()
         raise RuntimeError("SHA-512 mismatch: the download does not match the manifest, and was deleted")
+    if pathlib.Path(manifest["url"]).suffix.lower() == ".exe":
+        return archive  # Windows ships a bare PE, not a tarball
     unpacked = dest / "unpacked"
     with tarfile.open(archive) as tar:
         tar.extractall(unpacked, filter="data")

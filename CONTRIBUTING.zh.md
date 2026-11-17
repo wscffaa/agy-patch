@@ -2,7 +2,7 @@
 
 [English](CONTRIBUTING.md) | 中文
 
-`agy-patch` 面向闭源 Go Mach-O 二进制（`darwin/arm64`）。项目可持续性依赖**fail-closed 升级机制**：绝不把旧版本偏移量盲目套用到新版上游二进制上。
+`agy-patch` 面向闭源 Go 二进制：macOS 为 Mach-O/arm64，Windows 为 PE32+/amd64。项目可持续性依赖**fail-closed 升级机制**：绝不把旧版本偏移量盲目套用到新版上游二进制上。
 
 ## 升级到新版 `agy`
 
@@ -28,6 +28,16 @@
    python3 patch_agy.py --apply
    python3 patch_agy.py --status -v
    ```
+
+## Windows（amd64）版本
+
+Windows 补丁固定于 `agy v1.5.9`，精确原始字节记录在 `site_shapes_windows.json`。升级新版本时：
+
+1. 从 updater manifest 下载 `cli_windows_x64.exe` 并校验 SHA-512。
+2. 执行 `python patch_agy.py --status --binary <new.exe> -v`；`.text` 大小或任一位点原始字节不匹配都会 fail-closed。
+3. 审查函数体、跳转目标、寄存器/栈约定与补丁指令语义后，再更新 `tools/win_amd64.py` 或 `site_shapes_windows.json` 中唯一权威的原始字节。短指令前缀匹配不能证明功能正确。
+4. 在隔离副本上打补丁。`--version`、`models` 和 ACP `initialize` 仅是启动/协议冒烟检查。推荐安装前，还需分别验证 `/model` + Tab、实际请求中的 checkpoint 限制、超过 64K 输入的保留与空闲缓存重放。Windows 预演跳过 wire/screens 时必须报告功能验证不完整。
+5. Windows 尚未移植 TUI/CoT、上下文分母修正、15 秒空闲界面刷新和可选 Unix Socket MCP Hub。必要行为有证据前应保留实验性标记，不可从单元测试通过推断功能对等。
 
 ## 提交 PR 前自检
 

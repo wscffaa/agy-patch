@@ -64,7 +64,9 @@ jq -r '
 [[ -z "${SESSION_ID:-}" ]] && exit 0
 
 # ─── 2. Stateful TPS, Cache TTL & Response Model Engine ───────────────────────
-local STATE_FILE="/tmp/agy_telemetry_${SESSION_ID//[^a-zA-Z0-9_-]/_}.dat"
+# Shared with cache_relay.py: /tmp on macOS, native temp on Windows, overridable for tests.
+local CACHE_DIR="${AGY_CACHE_RELAY_DIR:-/tmp}"
+local STATE_FILE="${CACHE_DIR}/agy_telemetry_${SESSION_ID//[^a-zA-Z0-9_-]/_}.dat"
 local CONV_DB="${HOME}/.gemini/antigravity-cli/conversations/${SESSION_ID}.db"
 local CUR_MODEL_KEY="${MODEL_NAME// /_}"
 local PREV_STATE="idle" START_TIME=$NOW BASE_OUT=$TOT_OUT LAST_TPS="--" STEP_LAT="--" LAST_DELTA=0 RESP_MODEL="" PREV_MODEL_KEY="" CACHE_TS=0
@@ -134,7 +136,7 @@ fi
 # Under cache_relay.py, the relay's record of the last real or replayed upstream request
 # is authoritative: it excludes subagent traffic, so a parent waiting on a long subagent
 # or tool run counts down truthfully instead of being reset on every non-idle tick.
-local RELAY_FILE="/tmp/agy_cache_${SESSION_ID//[^a-zA-Z0-9_-]/_}.dat"
+local RELAY_FILE="${CACHE_DIR}/agy_cache_${SESSION_ID//[^a-zA-Z0-9_-]/_}.dat"
 local RELAY_TS=0 RELAY_TOUCHES=0 RELAY_STATUS=""
 if [[ -n "${AGY_CACHE_RELAY:-}" && -r "$RELAY_FILE" ]]; then
   read -r RELAY_TS RELAY_TOUCHES RELAY_STATUS < "$RELAY_FILE" 2>/dev/null || true

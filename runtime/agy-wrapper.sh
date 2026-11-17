@@ -1,5 +1,6 @@
 #!/bin/zsh
-# Antigravity CLI wrapper (native Google OAuth + prompt cache keepalive relay; no local gateway)
+# Antigravity CLI wrapper (native Google OAuth + prompt cache keepalive relay; no local gateway).
+# The Windows sibling is runtime/agy_wrapper.py behind runtime/agy-wrapper.cmd.
 # Delegates binary execution to the single patched Mach-O binary at ~/.local/bin/agy.
 
 # Never let a background update replace the patched binary. Extension-spawned processes
@@ -21,8 +22,9 @@ relay_py=$HOME/.gemini/agy-patch/runtime/cache_relay.py
 if [[ "${AGY_CACHE_RELAY:-}" != off && -r $relay_py && ( $# -eq 0 || "$1" == -* || "$1" == "acp" ) ]] &&
    (( ! ${argv[(I)(-p|--print|--prompt|--login|--help|-h)(|=*)]} )); then
   # A nested agy inherits its parent's relay as GOOGLE_GEMINI_BASE_URL; chain to the original.
+  relay_parent=${AGY_CACHE_RELAY:-}
   gemini_upstream=${GOOGLE_GEMINI_BASE_URL:-}
-  [[ -n $gemini_upstream && $gemini_upstream == "${AGY_CACHE_RELAY:-}" ]] && gemini_upstream=${AGY_GEMINI_UPSTREAM:-}
+  [[ -n $gemini_upstream && $gemini_upstream == "$relay_parent" ]] && gemini_upstream=${AGY_GEMINI_UPSTREAM:-}
   relay_args=(--parent $$)
   [[ -n $gemini_upstream ]] && relay_args+=(--gemini-upstream "$gemini_upstream")
   exec {relay_fd}< <(exec python3 -I $relay_py $relay_args 2>>/tmp/agy_cache_relay.log)
@@ -32,6 +34,11 @@ if [[ "${AGY_CACHE_RELAY:-}" != off && -r $relay_py && ( $# -eq 0 || "$1" == -* 
     export AGY_CACHE_RELAY="http://127.0.0.1:$relay_port"
     if [[ -n $gemini_upstream ]]; then
       export AGY_GEMINI_UPSTREAM=$gemini_upstream GOOGLE_GEMINI_BASE_URL=$AGY_CACHE_RELAY
+    else
+      # The inherited value named the parent relay, not a Gemini endpoint; leaving it would
+      # bypass this relay, and pointing it here without an upstream would mean Cloud Code.
+      unset AGY_GEMINI_UPSTREAM
+      [[ -n $relay_parent && ${GOOGLE_GEMINI_BASE_URL:-} == "$relay_parent" ]] && unset GOOGLE_GEMINI_BASE_URL
     fi
     CLOUD_CODE_URL="$AGY_CACHE_RELAY" exec $agy_bin "$@"
   fi

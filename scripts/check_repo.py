@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
@@ -51,10 +52,30 @@ def check_python_compile() -> list[str]:
 def check_shell_syntax() -> list[str]:
     zsh = shutil.which("zsh")
     if not zsh:
+        print("[skip] Shell syntax: zsh is not installed.", file=sys.stderr)
+        return []
+    try:
+        probe = subprocess.run([zsh, "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if sys.platform != "win32":
+            return [f"could not run zsh: {exc}"]
+        print(f"[skip] Shell syntax: zsh could not run ({exc}).", file=sys.stderr)
+        return []
+    if probe.returncode != 0:
+        if sys.platform != "win32":
+            return [f"zsh --version failed with exit code {probe.returncode}"]
+        print(f"[skip] Shell syntax: installed zsh failed with exit code {probe.returncode}.", file=sys.stderr)
         return []
     errors: list[str] = []
     for sh in sorted((REPO / "runtime").glob("*.sh")):
-        proc = subprocess.run([zsh, "-n", str(sh)], capture_output=True, text=True)
+        # Windows checkouts can carry CRLF; zsh -n rejects the CR before the newline.
+        with tempfile.NamedTemporaryFile("wb", suffix=".sh", delete=False) as tmp:
+            tmp.write(sh.read_bytes().replace(b"\r\n", b"\n"))
+            tmp_path = pathlib.Path(tmp.name)
+        try:
+            proc = subprocess.run([zsh, "-n", str(tmp_path)], capture_output=True, text=True)
+        finally:
+            tmp_path.unlink(missing_ok=True)
         if proc.returncode != 0:
             errors.append(f"zsh -n failed for {sh.relative_to(REPO)}: {proc.stderr.strip()}")
     return errors
@@ -72,6 +93,38 @@ def check_site_shapes() -> list[str]:
     for site_name, shapes in data.items():
         if not isinstance(shapes, list) or not shapes or not all(isinstance(s, str) and s for s in shapes):
             errors.append(f"site_shapes.json[{site_name!r}] must be a non-empty list of strings")
+    return errors
+
+
+def check_site_shapes_windows() -> list[str]:
+    """Validate the reviewed PE/amd64 stock bytes and text-section bounds."""
+    path = REPO / "site_shapes_windows.json"
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        return [f"invalid site_shapes_windows.json: {exc}"]
+    if not isinstance(data, dict) or not data:
+        return ["site_shapes_windows.json must be a non-empty object"]
+    errors: list[str] = []
+    for version, spec in data.items():
+        if not isinstance(spec, dict):
+            errors.append(f"site_shapes_windows.json[{version!r}] must be an object")
+            continue
+        vsize, raw = spec.get("text_vsize"), spec.get("text_raw_size")
+        if not isinstance(vsize, int) or not isinstance(raw, int) or not 0 < vsize < raw:
+            errors.append(f"site_shapes_windows.json[{version!r}] needs 0 < text_vsize < text_raw_size")
+        sites = spec.get("sites")
+        if not isinstance(sites, dict) or not sites:
+            errors.append(f"site_shapes_windows.json[{version!r}].sites must be a non-empty object")
+            continue
+        for name, shape in sites.items():
+            try:
+                if not bytes.fromhex(shape):
+                    raise ValueError("empty")
+            except (TypeError, ValueError):
+                errors.append(f"site_shapes_windows.json[{version!r}][{name!r}] is not a non-empty hex string")
     return errors
 
 
@@ -172,6 +225,7 @@ def run_all() -> list[str]:
         check_python_compile,
         check_shell_syntax,
         check_site_shapes,
+        check_site_shapes_windows,
         check_templates,
         check_privacy_and_secrets,
         check_markdown_links,
@@ -188,7 +242,7 @@ def main() -> int:
         for err in errors:
             print(f"[FAIL] {err}", file=sys.stderr)
         return 1
-    print("[ok] All repository sustainability and privacy checks passed.")
+    print("[ok] Available repository checks passed; any unavailable checks are listed as [skip].")
     return 0
 
 

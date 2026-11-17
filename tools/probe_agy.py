@@ -28,22 +28,27 @@ from __future__ import annotations
 import argparse
 import codecs
 import difflib
-import fcntl
+import filecmp
 import http.server
 import json
 import os
-import pty
 import re
-import select
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
-import termios
 import threading
 import time
 from pathlib import Path
+
+try:  # POSIX pty probe; the rest of the tool works on Windows
+    import fcntl
+    import pty
+    import select
+    import termios
+except ImportError:
+    fcntl = pty = select = termios = None
 
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
@@ -52,7 +57,10 @@ if str(REPO) not in sys.path:
 import patch_agy
 from tools import capture_prompt, prompt_templates
 
-DEFAULT_BINARY = Path.home() / ".local/bin/agy"
+if os.name == "nt":
+    DEFAULT_BINARY = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "agy/bin/agy.exe"
+else:
+    DEFAULT_BINARY = Path.home() / ".local/bin/agy"
 STATE_DIR = Path.home() / ".gemini" / capture_prompt.STATE_SUBDIR
 WIRE_MODELS = [
     *(f"gemini-4-hydrogen-{e}" for e in ("low", "medium", "high", "xhigh")),
@@ -318,6 +326,8 @@ class Screen:
 
 
 def run_tui(binary: Path, out: Path, settings: dict) -> None:
+    if pty is None:
+        raise SystemExit("the TUI probe needs a POSIX pty; run it on macOS or Linux")
     out.mkdir(parents=True, exist_ok=True)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Gemini)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -433,6 +443,18 @@ def compare_sites(old_bin: Path, new_bin: Path, context: int = 0x40) -> int:
     old, new = old_bin.read_bytes(), new_bin.read_bytes()
     resolve = lambda path, data: {s.name: s for s in patch_agy.resolve_patch_sites(data, patch_agy.detect_binary_version(path), strict=True)}
     old_sites, new_sites = resolve(old_bin, old), resolve(new_bin, new)
+    if old[:2] == b"MZ" or new[:2] == b"MZ":
+        flagged = 0
+        for name, site in sorted(new_sites.items()):
+            before = old_sites.get(name)
+            if before is None:
+                print(f"- {name}: only in new")
+                flagged += 1
+            elif (before.original or b"") != (site.original or b"") or before.patched != site.patched:
+                print(f"- {name}: stock/patch bytes changed")
+                flagged += 1
+        print(f"{len(new_sites)} sites, {flagged} to read: PE sites are pinned by exact bytes in site_shapes_windows.json")
+        return flagged
     for label, here, there in (("only in old", old_sites, new_sites), ("only in new", new_sites, old_sites)):
         gone: dict[str, int] = {}
         for name in here.keys() - there.keys():
@@ -461,17 +483,75 @@ def compare_sites(old_bin: Path, new_bin: Path, context: int = 0x40) -> int:
 
 # --- rehearse ---------------------------------------------------------------------------------
 
+def _path_key(path: Path) -> str:
+    """The same directory entry, without following links (or changing case on Windows)."""
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _same_entry(left: Path, right: Path) -> bool:
+    return _path_key(left) == _path_key(right)
+
+
+def _same_file(left: Path, right: Path) -> bool:
+    try:
+        return left.exists() and right.exists() and os.path.samefile(left, right)
+    except OSError:
+        return False
+
+
+def _staged_binary_name() -> str:
+    """Never reuse the source basename: a rerun stages from a `.orig`, not under its name."""
+    return "agy.exe" if os.name == "nt" else "agy"
+
+
+def _looks_like_backup_for(clean: Path, binary: Path) -> bool:
+    name = clean.name
+    return name == binary.name + ".orig" or (name.startswith(binary.name + ".v") and name.endswith(".orig"))
+
+
 def _stage(clean: Path, dest: Path) -> tuple[Path, Path, str]:
-    """Copy a clean binary to `dest/agy` and link it as the backup --apply patches from; return both and the version."""
+    """Copy a clean binary into `dest` and create the backup --apply patches from.
+
+    On Windows the staged copy is always `agy.exe`, so a rerun can stage from this
+    directory's own `agy.exe.v<version>.orig` without naming the staged binary
+    after its source. A source that is the staged binary itself, a hardlink/symlink
+    to it, or an aliased backup is rejected before anything is unlinked. When the
+    source already is this stage's backup, it is left byte for byte intact; a
+    retained backup with different bytes is never overwritten.
+    """
+    if not clean.is_file():
+        raise RuntimeError(f"cannot stage {clean}: not a file")
+    binary = dest / _staged_binary_name()
+    if _same_entry(binary, clean):
+        raise RuntimeError(f"refusing to stage {clean}: {binary} is the source itself; pass a separate --dir")
+    if _same_file(binary, clean):
+        rerun_link = _looks_like_backup_for(clean, binary) and not binary.is_symlink() and not clean.is_symlink()
+        if not rerun_link:
+            raise RuntimeError(f"refusing to stage {clean}: {binary} is a link to the source; pass a separate --dir")
     dest.mkdir(parents=True, exist_ok=True)
-    binary = dest / "agy"
-    binary.unlink(missing_ok=True)  # on a second rehearsal `clean` may be this directory's own backup, a link to it
+    binary.unlink(missing_ok=True)  # a rerun replaces the staged copy; the source is guarded above
     shutil.copy2(clean, binary)
     binary.chmod(0o755)
     version = patch_agy.detect_binary_version(binary)
     backup = patch_agy.backup_path_for(binary)
-    backup.unlink(missing_ok=True)
-    os.link(binary, backup)  # --apply replaces `agy` with a new file, so the link stays clean
+    if backup.is_symlink():
+        raise RuntimeError(f"refusing to stage {clean}: its backup {backup} is a symlink; pass a separate --dir")
+    if _same_entry(backup, clean):
+        # The documented rerun passes this stage's `.orig` as --stock. It already is
+        # the clean backup; deleting and recreating it would mutate the input.
+        return binary, backup, version
+    if _same_file(backup, clean):
+        raise RuntimeError(f"refusing to stage {clean}: its backup {backup} is a link to the source; pass a separate --dir")
+    if backup.exists():
+        if backup.is_file() and filecmp.cmp(binary, backup, shallow=False):
+            return binary, backup, version
+        raise RuntimeError(
+            f"refusing to overwrite retained clean backup {backup}: it differs from {clean}; pass a different --dir"
+        )
+    if os.name == "nt":
+        shutil.copy2(binary, backup)
+    else:
+        os.link(binary, backup)  # --apply replaces `agy` with a new file, so the link stays clean
     return binary, backup, version
 
 
@@ -509,6 +589,98 @@ def _stock_prompt(backup: Path, version: str, old_version: str) -> tuple[str, st
     return "READ", f"{what} differ from v{old_version}: diff templates/v{old_version}/stock templates/v{version}/stock"
 
 
+def rehearse_windows(stock: Path | None, old: Path | None, workdir: Path | None) -> int:
+    """Windows byte/startup rehearsal: fetch, resolve, patch a copy, and smoke-run it.
+
+    Wire and TUI behavior is not probed on Windows, so a clean result never claims the
+    patched feature paths work.
+    """
+    if old is None:
+        old = patch_agy.backup_path_for(DEFAULT_BINARY)
+    if not old.exists():
+        raise SystemExit(f"{old} is missing: give the previous release's clean binary with --old")
+    owns_workdir = workdir is None
+    workdir = workdir if workdir is not None else Path(tempfile.mkdtemp(prefix="agy-rehearsal-"))
+    if stock is None:
+        fetch = subprocess.run(
+            [sys.executable, "-I", str(REPO / "tools/check_agy_update.py"), "--fetch", str(workdir / "release")],
+            capture_output=True,
+            text=True,
+        )
+        print(fetch.stdout.strip())
+        if fetch.returncode == 0:
+            if owns_workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
+            return 0
+        unpacked = re.search(r"^Verified and unpacked: (.+)$", fetch.stdout, re.M)
+        if fetch.returncode != 1 or not unpacked:
+            raise SystemExit(f"check_agy_update.py failed: {fetch.stderr.strip()}")
+        stock = Path(unpacked.group(1))
+
+    new_bin, new_orig, version = _stage(stock, workdir / "new")
+    old_bin, old_orig, old_version = _stage(old, workdir / "old")
+    print(f"rehearsing v{old_version} -> v{version} in {workdir}")
+    report: list[tuple[str, str, str]] = []
+
+    def step(name: str, verdict: str, detail: str) -> None:
+        report.append((name, verdict, detail))
+        print(f"\n== {name}: {verdict}  {detail}", flush=True)
+
+    def finish() -> int:
+        print("\n" + "=" * 100)
+        for name, verdict, detail in report:
+            print(f"{verdict:6s} {name:18s} {detail[:160]}")
+        bad = [v for _, v, _ in report if v in ("FAIL", "REVIEW")]
+        print("=" * 100 + f"\ncopies kept in {workdir}")
+        if not bad:
+            print(
+                "Windows rehearsal verified exact stock bytes and a `--version` startup smoke only. "
+                "Patched feature behavior is UNVERIFIED: model requests, long-context selection, checkpoint/"
+                "USER_INPUT limits, and TUI screens were not exercised."
+            )
+        return 1 if bad else 0
+
+    verdict, detail = _scaffold_templates(new_orig, version, old_version)
+    step("templates", verdict, detail)
+    new_data, old_data = new_orig.read_bytes(), old_orig.read_bytes()
+    try:
+        new_groups = patch_agy.resolve_site_groups(new_data, version, strict=True)
+        old_groups = patch_agy.resolve_site_groups(old_data, old_version, strict=True)
+    except Exception as exc:
+        step("resolve", "FAIL", f"{type(exc).__name__}: {exc}")
+        return finish()
+    broken = 0
+    for name, result in new_groups.items():
+        before = old_groups.get(name)
+        was = "failed" if isinstance(before, Exception) else str(len(before or ()))
+        if isinstance(result, Exception):
+            broken += 1
+            print(f"  RE-AUTHOR  {name:20s} {was:>3} -> ?   {type(result).__name__}: {result}")
+        else:
+            dirty = [s.name for s in result if patch_agy.site_state(new_data, s) != "unpatched"]
+            broken += bool(dirty)
+            print(f"  {'RE-AUTHOR' if dirty else 'keep':10s} {name:20s} {was:>3} -> {len(result):<3}")
+    if broken:
+        step("resolve", "FAIL", f"{broken} group(s) to re-author")
+        return finish()
+    sites = patch_agy.resolve_patch_sites(new_data, version, strict=True)
+    step("resolve", "ok", f"{len(sites)} sites resolve on the clean v{version}")
+    flagged = compare_sites(old_orig, new_orig)
+    step("stock bytes", "READ" if flagged else "ok", f"{flagged} site(s) differ from v{old_version}")
+    patch_agy.apply_patch(new_bin)
+    state = patch_agy.inspect_binary(new_bin)[0]
+    runs = subprocess.run([str(new_bin), "--version"], capture_output=True, text=True).stdout.strip() == version
+    step(
+        "apply",
+        "ok" if state == "patched" and runs else "FAIL",
+        f"state {state}; `--version` {'exited successfully' if runs else 'FAILED'}; startup smoke only, "
+        "patched feature paths were not exercised",
+    )
+    step("wire", "UNKNOWN", "not verified on Windows: no wire probe runs; model requests and selection are unknown")
+    step("screens", "UNKNOWN", "not verified on Windows: TUI sites are not ported and no screen probe runs")
+    return finish()
+
+
 def rehearse(stock: Path | None, old: Path | None, workdir: Path | None, no_tui: bool) -> int:
     """Rehearse an upgrade on copies and report, step by step, whether the patch still holds."""
     report: list[tuple[str, str, str]] = []
@@ -531,13 +703,15 @@ def rehearse(stock: Path | None, old: Path | None, workdir: Path | None, no_tui:
     old = old or patch_agy.backup_path_for(DEFAULT_BINARY)
     if not old.exists():
         raise SystemExit(f"{old} is missing: give the previous release's clean binary with --old")
-    workdir = workdir or Path(tempfile.mkdtemp(prefix="agy-rehearsal-"))
+    owns_workdir = workdir is None
+    workdir = workdir if workdir is not None else Path(tempfile.mkdtemp(prefix="agy-rehearsal-"))
     if stock is None:
         fetch = subprocess.run([sys.executable, "-I", str(REPO / "tools/check_agy_update.py"), "--fetch", str(workdir / "release")],
                                capture_output=True, text=True)
         print(fetch.stdout.strip())
         if fetch.returncode == 0:  # up to date: nothing to rehearse
-            shutil.rmtree(workdir, ignore_errors=True)
+            if owns_workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
             return 0
         unpacked = re.search(r"^Verified and unpacked: (.+)$", fetch.stdout, re.M)
         if fetch.returncode != 1 or not unpacked:
@@ -652,6 +826,8 @@ def main() -> int:
     if args.command == "wire":
         return 1 if any(v.startswith("FAILED") for v in run_wire(args.binary, args.models).values()) else 0
     if args.command == "rehearse":
+        if os.name == "nt":
+            return rehearse_windows(args.stock, args.old, args.dir)
         return rehearse(args.stock, args.old, args.dir, args.no_tui)
     if args.command == "sites":
         compare_sites(args.old, args.new)

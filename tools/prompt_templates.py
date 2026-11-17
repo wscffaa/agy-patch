@@ -24,14 +24,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import struct
+import sys
 from typing import NamedTuple
 
-VM_BASE = 0x100000000  # agy's Mach-O maps every section at VM_BASE + file offset
+# `python tools/prompt_templates.py` puts only tools/ on sys.path; `python -I`
+# puts neither tools/ nor the repository there. Add the repository explicitly so
+# the script works both ways and as `tools.prompt_templates` after a normal import.
+REPO = pathlib.Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from tools.binfmt import PEImage, detect_image
+
+VM_BASE = 0x100000000  # Mach-O compatibility alias; address translation goes through detect_image()
 TEMPLATE_ROOT = b"google3/third_party/jetski/prompt/template_provider/templates/"
 TEMPLATE_DIR = TEMPLATE_ROOT + b"system_prompts/"
-TEMPLATES_ROOT = pathlib.Path(__file__).resolve().parent.parent / "templates"  # one v<version>/ directory per agy release
+TEMPLATES_ROOT = REPO / "templates"  # one v<version>/ directory per agy release
 
 
 class TemplateSlot(NamedTuple):
@@ -48,43 +59,52 @@ class Override(NamedTuple):
     original: bytes | None  # stock bytes; None when the slot is not stock, so only the backup can revert
 
 
-def find_template(data: bytes | bytearray, name: str) -> TemplateSlot:
+def find_template(data: bytes | bytearray, name: str, image=None) -> TemplateSlot:
+    image = image or detect_image(data)
     path = TEMPLATE_DIR + name.encode()
     entries = []
     pos = data.find(path)
     while pos != -1:
-        entry = data.find(struct.pack("<QQ", VM_BASE + pos, len(path)))
+        entry = data.find(struct.pack("<QQ", image.va_of(pos), len(path)))
         if entry != -1:
             entries.append(entry)
         pos = data.find(path, pos + 1)
     if len(entries) != 1:
         raise RuntimeError(f"Expected one embed.FS entry for {name}, found {len(entries)}")
     data_va, data_len = struct.unpack_from("<QQ", data, entries[0] + 16)
-    offset = data_va - VM_BASE
+    offset = image.offset_of(data_va)
     content = bytes(data[offset : offset + data_len])
     if b"\x00" in content:
         raise RuntimeError(f"embed.FS entry for {name} does not point at template text")
     return TemplateSlot(name, offset, content)
 
 
-def iter_templates(data: bytes | bytearray) -> list[TemplateSlot]:
+def iter_templates(data: bytes | bytearray, image=None) -> list[TemplateSlot]:
     """Every file in the template `embed.FS`, walked outward from identity.tmpl's 48-byte entry."""
-    anchor = find_template(data, "identity.tmpl")
+    image = image or detect_image(data)
+    anchor = find_template(data, "identity.tmpl", image)
     anchor_name = TEMPLATE_DIR + b"identity.tmpl"
-    first = data.find(struct.pack("<QQQ", VM_BASE + data.find(anchor_name), len(anchor_name), VM_BASE + anchor.offset))
+    first = data.find(
+        struct.pack("<QQQ", image.va_of(data.find(anchor_name)), len(anchor_name), image.va_of(anchor.offset))
+    )
     slots = []
     for step in (-48, 48):
         entry = first if step > 0 else first - 48
         while True:
             name_va, name_len, data_va, data_len = struct.unpack_from("<QQQQ", data, entry)
-            if not 0 < name_len < 512 or not VM_BASE <= name_va < VM_BASE + len(data):
+            if not 0 < name_len < 512:
                 break
-            name = bytes(data[name_va - VM_BASE : name_va - VM_BASE + name_len])
+            try:
+                name_offset = image.offset_of(name_va)
+            except ValueError:
+                break
+            name = bytes(data[name_offset : name_offset + name_len])
             if not name.startswith(TEMPLATE_ROOT):
                 break
             if data_len:
-                content = bytes(data[data_va - VM_BASE : data_va - VM_BASE + data_len])
-                slots.append(TemplateSlot(name[len(TEMPLATE_ROOT):].decode(), data_va - VM_BASE, content))
+                data_offset = image.offset_of(data_va)
+                content = bytes(data[data_offset : data_offset + data_len])
+                slots.append(TemplateSlot(name[len(TEMPLATE_ROOT):].decode(), data_offset, content))
             entry += step
     return sorted(slots)
 
@@ -116,13 +136,22 @@ def version_dir(version: str) -> pathlib.Path:
     return path
 
 
-def resolve_overrides(data: bytes | bytearray, version: str, strict: bool = False) -> list[Override]:
+def resolve_overrides(data: bytes | bytearray, version: str, strict: bool = False, image=None) -> list[Override]:
     """The slots that `templates/v<version>/system_prompts/` changes from `stock/`.
 
     `strict` (patching from a clean backup) demands every slot equal its `stock/` copy.
     Otherwise (inspecting a live binary) a slot that is neither stock nor patched is
     reported with `original=None`, which shows up as an unknown site state.
+
+    The checked-in stock/ and system_prompts/ trees may use LF or CRLF (Git
+    autocrlf on Windows rewrites them), while each binary embeds one of the two.
+    Normalize both sides to the slot's own newline before comparing and filling.
     """
+    image = image or detect_image(data)
+
+    def normalize(blob: bytes, newline: bytes) -> bytes:
+        return blob.replace(b"\r\n", b"\n").replace(b"\n", newline)
+
     root = version_dir(version)
     desired_dir, stock_dir = root / "system_prompts", root / "stock/system_prompts"
     manifest = root / "prompt_overrides.json"
@@ -134,8 +163,10 @@ def resolve_overrides(data: bytes | bytearray, version: str, strict: bool = Fals
 
     overrides, changed = [], set()
     for name in files:
-        desired, stock = (desired_dir / name).read_bytes(), (stock_dir / name).read_bytes()
-        slot = find_template(data, name)
+        slot = find_template(data, name, image)
+        newline = b"\r\n" if b"\r\n" in slot.content else b"\n"
+        desired = normalize((desired_dir / name).read_bytes(), newline)
+        stock = normalize((stock_dir / name).read_bytes(), newline)
         if strict and slot.content != stock:
             raise RuntimeError(
                 f"{name}: the binary's template differs from {stock_dir / name}. This stock/ copy is not from this "
@@ -146,7 +177,7 @@ def resolve_overrides(data: bytes | bytearray, version: str, strict: bool = Fals
                 overrides.append(Override(name, "restore", slot, stock, None))
             continue
         changed.add(name)
-        patched = fill_slot(name, desired.rstrip(b"\n"), len(slot.content))
+        patched = fill_slot(name, desired.rstrip(b"\r\n"), len(slot.content))
         action = "blank" if not desired.strip() else "replace"
         overrides.append(Override(name, action, slot, patched, stock if slot.content == stock else None))
 
@@ -161,7 +192,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Print or dump the templates embedded in an agy binary.")
     ap.add_argument("name", nargs="?", help="System prompt template to print, e.g. identity.tmpl")
     ap.add_argument("--dump", type=pathlib.Path, metavar="DIR", help="Write every embedded template under DIR")
-    ap.add_argument("--binary", type=pathlib.Path, default=pathlib.Path.home() / ".local/bin/agy")
+    default_binary = pathlib.Path.home() / ".local/bin/agy"
+    if os.name == "nt":
+        default_binary = pathlib.Path(os.environ.get("LOCALAPPDATA", pathlib.Path.home())) / "agy/bin/agy.exe"
+    ap.add_argument("--binary", type=pathlib.Path, default=default_binary)
     args = ap.parse_args()
     data = args.binary.read_bytes()
     if args.dump:
